@@ -1,0 +1,391 @@
+import React, { useState, useEffect } from 'react';
+import { Card, CardHeader, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
+import { HelpCircle, FileText } from 'lucide-react';
+import Papa from 'papaparse';
+import _ from 'lodash';
+
+const QuizApp = () => {
+  const [allQuestions, setAllQuestions] = useState([]);
+  const [questions, setQuestions] = useState([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [score, setScore] = useState(0);
+  const [showScore, setShowScore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isStarted, setIsStarted] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [selectedDomaine, setSelectedDomaine] = useState('');
+  const [selectedTheme, setSelectedTheme] = useState('');
+  const [selectedNiveau, setSelectedNiveau] = useState('');
+  const [lastSelectedAnswer, setLastSelectedAnswer] = useState(null);
+
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    setSelectedFile(file);
+  };
+
+  const loadQuestionsFromFile = () => {
+    if (!selectedFile) {
+      setError("Veuillez sélectionner un fichier CSV");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const csvText = e.target.result;
+      
+      Papa.parse(csvText, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.data && results.data.length > 0) {
+            const requiredColumns = ['Domaines', 'Questions num', 'Themes', 'Niveau de question', 'Question', 'Proposition (D)', 'Proposition (C)', 'Proposition (B)', 'Proposition (A)', 'CorrectAnswer'];
+            const hasAllColumns = requiredColumns.every(col => Object.keys(results.data[0]).includes(col));
+            
+            if (!hasAllColumns) {
+              setError("Le fichier CSV doit contenir toutes les colonnes requises");
+              setLoading(false);
+              return;
+            }
+            
+            // Transform the data to match the quiz component's expected format
+            const transformedQuestions = results.data.map(row => ({
+              domaine: row['Domaines'] || 'Non spécifié',
+              theme: row['Themes'] || 'Non spécifié',
+              niveau: row['Niveau de question'] || 'Non spécifié',
+              question: row['Question'] || '',
+              answer1: row['Proposition (A)'] || '',
+              answer2: row['Proposition (B)'] || '',
+              answer3: row['Proposition (C)'] || '',
+              answer4: row['Proposition (D)'] || '',
+              correctAnswer: getCorrectAnswer(row['CorrectAnswer'], row)
+            })).filter(q => q.question && q.correctAnswer);
+            
+            setAllQuestions(transformedQuestions);
+            
+            // Populate dropdown options
+            const domaines = _.uniq(transformedQuestions.map(q => q.domaine));
+            const themes = _.uniq(transformedQuestions.map(q => q.theme));
+            const niveaux = _.uniq(transformedQuestions.map(q => q.niveau));
+
+            setSelectedDomaine(domaines[0] || '');
+            setSelectedTheme(themes[0] || '');
+            setSelectedNiveau(niveaux[0] || '');
+
+            filterAndStartQuiz(transformedQuestions, domaines[0], themes[0], niveaux[0]);
+            
+            setLoading(false);
+          } else {
+            setError("Le fichier ne contient pas de questions valides");
+            setLoading(false);
+          }
+        },
+        error: (error) => {
+          setError("Erreur lors de l'analyse du fichier CSV: " + error.message);
+          setLoading(false);
+        }
+      });
+    };
+
+    reader.onerror = () => {
+      setError("Erreur lors de la lecture du fichier");
+      setLoading(false);
+    };
+
+    reader.readAsText(selectedFile, 'UTF-8');
+  };
+
+  const filterAndStartQuiz = (questionsToFilter, domaine, theme, niveau) => {
+    const filteredQuestions = questionsToFilter.filter(q => 
+      q.domaine === domaine && 
+      q.theme === theme && 
+      q.niveau === niveau
+    );
+
+    // Randomly select 20 questions or all if less than 20
+    const shuffledQuestions = filteredQuestions
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 20);
+
+    setQuestions(shuffledQuestions);
+    setCurrentQuestionIndex(0);
+    setScore(0);
+    setIsStarted(true);
+    setLastSelectedAnswer(null);
+  };
+
+  // Function to get the correct answer based on the CorrectAnswer column
+  const getCorrectAnswer = (correctAnswer, row) => {
+    switch(correctAnswer) {
+      case 'A':
+        return row['Proposition (A)'];
+      case 'B':
+        return row['Proposition (B)'];
+      case 'C':
+        return row['Proposition (C)'];
+      case 'D':
+        return row['Proposition (D)'];
+      default:
+        return null;
+    }
+  };
+
+  const handleAnswer = (selectedAnswer) => {
+    const currentQuestion = questions[currentQuestionIndex];
+    const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
+    
+    setLastSelectedAnswer(selectedAnswer);
+    
+    if (isCorrect) {
+      setScore(prevScore => prevScore + 1);
+    }
+
+    const nextQuestion = currentQuestionIndex + 1;
+    if (nextQuestion < questions.length) {
+      setTimeout(() => {
+        setCurrentQuestionIndex(nextQuestion);
+        setLastSelectedAnswer(null);
+      }, 1500);
+    } else {
+      setShowScore(true);
+    }
+  };
+
+  const resetQuiz = () => {
+    setCurrentQuestionIndex(0);
+    setScore(0);
+    setShowScore(false);
+    filterAndStartQuiz(allQuestions, selectedDomaine, selectedTheme, selectedNiveau);
+    setLastSelectedAnswer(null);
+  };
+
+  const handleFilterChange = (type, value) => {
+    switch(type) {
+      case 'domaine':
+        setSelectedDomaine(value);
+        break;
+      case 'theme':
+        setSelectedTheme(value);
+        break;
+      case 'niveau':
+        setSelectedNiveau(value);
+        break;
+    }
+    
+    const filteredQuestions = allQuestions.filter(q => 
+      (type === 'domaine' ? value : selectedDomaine) === q.domaine &&
+      (type === 'theme' ? value : selectedTheme) === q.theme &&
+      (type === 'niveau' ? value : selectedNiveau) === q.niveau
+    );
+
+    filterAndStartQuiz(filteredQuestions, 
+      type === 'domaine' ? value : selectedDomaine,
+      type === 'theme' ? value : selectedTheme,
+      type === 'niveau' ? value : selectedNiveau
+    );
+  };
+
+  if (loading) {
+    return (
+      <Card className="w-full max-w-2xl mx-auto mt-8">
+        <CardContent className="p-6">
+          <div className="text-center">Chargement des questions...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!isStarted) {
+    return (
+      <Card className="w-full max-w-2xl mx-auto mt-8">
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <h2 className="text-2xl font-bold">Quiz Application</h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowHelp(!showHelp)}
+            >
+              <HelpCircle className="h-6 w-6" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-6">
+          {showHelp && (
+            <Alert className="mb-4">
+              <AlertTitle>Comment utiliser l'application</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>1. Sélectionnez un fichier CSV contenant vos questions</p>
+                <p>2. Filtrez les questions par domaine, thème et niveau</p>
+                <p>3. 20 questions seront sélectionnées aléatoirement</p>
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Erreur</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Sélectionner le fichier CSV des questions
+              </label>
+              <div className="flex items-center space-x-2">
+                <Input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  className="w-full"
+                />
+                <Button 
+                  onClick={loadQuestionsFromFile} 
+                  disabled={!selectedFile}
+                  className="flex items-center"
+                >
+                  <FileText className="mr-2 h-4 w-4" /> Charger
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (showScore) {
+    return (
+      <Card className="w-full max-w-2xl mx-auto mt-8">
+        <CardHeader className="text-center">
+          <h2 className="text-2xl font-bold">Quiz terminé !</h2>
+        </CardHeader>
+        <CardContent className="p-6">
+          <div className="text-center mb-4">
+            <p className="text-xl">
+              Votre score: {score} sur {questions.length}
+            </p>
+            <p className="text-lg mt-2">
+              ({Math.round((score / questions.length) * 100)}%)
+            </p>
+          </div>
+          <div className="text-center">
+            <Button onClick={resetQuiz}>Recommencer le quiz</Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const currentQuestion = questions[currentQuestionIndex];
+
+  return (
+    <Card className="w-full max-w-2xl mx-auto mt-8">
+      <CardHeader>
+        <div className="flex justify-between items-center">
+          <h2 className="text-xl font-bold">Question {currentQuestionIndex + 1}/{questions.length}</h2>
+          <div className="text-sm">Score: {score}</div>
+        </div>
+        <div className="flex space-x-2 mt-2">
+          <Select 
+            value={selectedDomaine} 
+            onValueChange={(value) => handleFilterChange('domaine', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Domaine" />
+            </SelectTrigger>
+            <SelectContent>
+              {_.uniq(allQuestions.map(q => q.domaine)).map(domaine => (
+                <SelectItem key={domaine} value={domaine}>{domaine}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select 
+            value={selectedTheme} 
+            onValueChange={(value) => handleFilterChange('theme', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Thème" />
+            </SelectTrigger>
+            <SelectContent>
+              {_.uniq(allQuestions.filter(q => q.domaine === selectedDomaine).map(q => q.theme)).map(theme => (
+                <SelectItem key={theme} value={theme}>{theme}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select 
+            value={selectedNiveau} 
+            onValueChange={(value) => handleFilterChange('niveau', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Niveau" />
+            </SelectTrigger>
+            <SelectContent>
+              {_.uniq(allQuestions.filter(q => q.domaine === selectedDomaine && q.theme === selectedTheme).map(q => q.niveau)).map(niveau => (
+                <SelectItem key={niveau} value={niveau}>{niveau}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+      <CardContent className="p-6">
+        <Progress 
+          value={((currentQuestionIndex + 1) / questions.length) * 100} 
+          className="mb-4"
+        />
+        <div className="mb-6">
+          <p className="text-lg mb-4">{currentQuestion.question}</p>
+          <div className="grid gap-3">
+            {['answer1', 'answer2', 'answer3', 'answer4'].map((answerKey) => {
+              const answer = currentQuestion[answerKey];
+              const isCorrectAnswer = answer === currentQuestion.correctAnswer;
+              const isSelectedAnswer = lastSelectedAnswer === answer;
+
+              return answer ? (
+                <Button
+                  key={answerKey}
+                  onClick={() => handleAnswer(answer)}
+                  variant="outline"
+                  disabled={!!lastSelectedAnswer}
+                  className={`text-left py-3 ${
+                    lastSelectedAnswer 
+                      ? (isCorrectAnswer 
+                          ? 'bg-green-500 text-white hover:bg-green-600' 
+                          : (isSelectedAnswer 
+                              ? 'bg-red-500 text-white hover:bg-red-600' 
+                              : ''
+                            )
+                        )
+                      : ''
+                  }`}
+                >
+                  {answer}
+                </Button>
+              ) : null;
+            })}
+          </div>
+          {lastSelectedAnswer && (
+            <div className="mt-4 text-sm text-gray-600">
+              Bonne réponse : {currentQuestion.correctAnswer}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+export default QuizApp;
